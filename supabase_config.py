@@ -42,7 +42,8 @@ def get_supabase_client() -> Client:
         raise ValueError("Supabase credentials not configured. See error message above.")
     
     # Temporarily remove proxy environment variables that may cause issues
-    # The Supabase client doesn't support proxy parameter
+    # Older versions of supabase-py (2.3.4) have compatibility issues with gotrue
+    # Newer versions (>=2.8.0) should handle this better, but we keep this as a safety measure
     proxy_vars_to_remove = []
     for var in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
         if var in os.environ:
@@ -54,7 +55,8 @@ def get_supabase_client() -> Client:
             del os.environ[var]
     
     try:
-        # Create client with only URL and key (no proxy support)
+        # Create client with only URL and key
+        # Note: Upgrade to supabase>=2.8.0 to fix proxy compatibility issues
         client = create_client(SUPABASE_URL, SUPABASE_KEY)
         
         # Restore proxy variables if they were removed
@@ -63,23 +65,22 @@ def get_supabase_client() -> Client:
                 os.environ[var] = _original_proxy_vars[var]
         
         return client
-    except TypeError as e:
-        # Restore proxy variables before re-raising
+    except (TypeError, ValueError) as e:
+        # Restore proxy variables before handling error
         for var in proxy_vars_to_remove:
             if var in _original_proxy_vars:
                 os.environ[var] = _original_proxy_vars[var]
         
-        if "proxy" in str(e).lower() or "unexpected keyword" in str(e).lower():
-            print(f"\nWarning: Proxy-related error detected: {e}")
-            print("Proxy environment variables have been temporarily removed.")
-            print("If this error persists, please check your Supabase client version.")
-            # Try one more time without proxy vars
-            try:
-                client = create_client(SUPABASE_URL, SUPABASE_KEY)
-                return client
-            except Exception as retry_error:
-                print(f"Error creating Supabase client after proxy removal: {retry_error}")
-                raise
+        error_str = str(e).lower()
+        if "proxy" in error_str or "unexpected keyword" in error_str:
+            print(f"\nError: Supabase client proxy compatibility issue: {e}")
+            print("This is likely due to using an older version of supabase-py.")
+            print("Solution: Upgrade to supabase>=2.8.0 in requirements.txt")
+            print("Run: pip install --upgrade supabase")
+            raise RuntimeError(
+                "Supabase client version incompatibility. Please upgrade supabase-py to >=2.8.0. "
+                "Update requirements.txt and redeploy."
+            ) from e
         else:
             raise
     except Exception as e:
