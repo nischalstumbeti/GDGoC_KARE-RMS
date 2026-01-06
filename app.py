@@ -6,6 +6,8 @@ import requests
 from datetime import datetime
 from werkzeug.utils import secure_filename
 import io
+import threading
+import time
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -55,6 +57,41 @@ def format_positions(value):
 
 # Register Jinja2 filter
 app.jinja_env.filters['format_positions'] = format_positions
+
+def keep_alive_ping():
+    """Background thread that pings a URL every 11 minutes to keep the service alive"""
+    ping_url = os.getenv('KEEP_ALIVE_URL', None)
+    ping_interval = int(os.getenv('KEEP_ALIVE_INTERVAL', 11 * 60))  # Default: 11 minutes in seconds
+    
+    # If no URL is set, try to construct from environment or use a default
+    if not ping_url:
+        # Try to get from Render environment variables or construct from app URL
+        render_url = os.getenv('RENDER_EXTERNAL_URL')
+        if render_url:
+            ping_url = render_url
+        else:
+            # Default to localhost for development
+            ping_url = 'http://localhost:8080'
+    
+    print(f"Keep-alive thread started. Will ping {ping_url} every {ping_interval // 60} minutes")
+    
+    while True:
+        try:
+            time.sleep(ping_interval)
+            response = requests.get(ping_url, timeout=10)
+            print(f"[Keep-Alive] Pinged {ping_url} - Status: {response.status_code} at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        except requests.exceptions.RequestException as e:
+            print(f"[Keep-Alive] Error pinging {ping_url}: {e}")
+        except Exception as e:
+            print(f"[Keep-Alive] Unexpected error: {e}")
+
+def start_keep_alive_thread():
+    """Start the keep-alive background thread"""
+    keep_alive_enabled = os.getenv('KEEP_ALIVE_ENABLED', 'true').lower() == 'true'
+    if keep_alive_enabled:
+        thread = threading.Thread(target=keep_alive_ping, daemon=True)
+        thread.start()
+        print("Keep-alive thread initialized")
 
 def init_default_user():
     """Initialize default admin user if it doesn't exist"""
@@ -857,8 +894,12 @@ def download_all_pdf():
                     as_attachment=True, 
                     download_name=f'all_checklists_{datetime.now().strftime("%Y%m%d")}.pdf')
 
+# Initialize default user and start keep-alive thread
+# This runs when the module is imported (works with both Flask dev server and Gunicorn)
+init_default_user()
+start_keep_alive_thread()
+
 if __name__ == '__main__':
-    init_default_user()
     app.run(debug=True, host='0.0.0.0', port=8080)
 
 
